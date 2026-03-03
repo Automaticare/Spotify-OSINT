@@ -134,6 +134,29 @@ class SpotifyClient:
                 browser.close()
                 return []
 
+            # JS helpers that operate only on real playlist rows, explicitly
+            # excluding anything inside a recommended-track container.
+            _scroll_last = (
+                "const all = document.querySelectorAll('[data-testid=\"tracklist-row\"]');"
+                "const pl = Array.from(all).filter(el => !el.closest('[data-testid=\"recommended-track\"]'));"
+                "if (pl.length) pl[pl.length - 1].scrollIntoView({block: 'end'});"
+            )
+            _scroll_first = (
+                "const all = document.querySelectorAll('[data-testid=\"tracklist-row\"]');"
+                "const pl = Array.from(all).filter(el => !el.closest('[data-testid=\"recommended-track\"]'));"
+                "if (pl.length) pl[0].scrollIntoView({block: 'start'});"
+            )
+
+            def playlist_rows():
+                """Return only tracklist rows that are not recommended tracks."""
+                all_rows = page.query_selector_all('[data-testid="tracklist-row"]')
+                return [
+                    r for r in all_rows
+                    if not r.evaluate(
+                        "el => !!el.closest('[data-testid=\"recommended-track\"]')"
+                    )
+                ]
+
             if known_ids is None:
                 # Full scan: scroll top-to-bottom and collect every track.
                 # Spotify uses virtual scroll — rows leaving the viewport are
@@ -141,11 +164,11 @@ class SpotifyClient:
                 # track IDs were found, not by DOM element count.
                 stale_rounds = 0
                 while stale_rounds < 5:
-                    rows = page.query_selector_all('[data-testid="tracklist-row"]')
+                    rows = playlist_rows()
                     new_found = False
 
                     for row in rows:
-                        track_link = row.query_selector('a[href*="/track/"]')
+                        track_link = row.query_selector('[data-testid="internal-track-link"]')
                         if not track_link:
                             continue
                         href = track_link.get_attribute("href") or ""
@@ -157,10 +180,7 @@ class SpotifyClient:
                         tracks.append(self._build_track(track_link, track_id, row))
 
                     stale_rounds = 0 if new_found else stale_rounds + 1
-                    page.evaluate(
-                        "const r = document.querySelectorAll('[data-testid=\"tracklist-row\"]');"
-                        "if (r.length) r[r.length - 1].scrollIntoView({block: 'end'});"
-                    )
+                    page.evaluate(_scroll_last)
                     page.wait_for_timeout(1000)
 
             else:
@@ -174,15 +194,12 @@ class SpotifyClient:
                 last_bottom_id: str | None = None
                 stable_rounds = 0
                 while stable_rounds < 3:
-                    page.evaluate(
-                        "const r = document.querySelectorAll('[data-testid=\"tracklist-row\"]');"
-                        "if (r.length) r[r.length - 1].scrollIntoView({block: 'end'});"
-                    )
+                    page.evaluate(_scroll_last)
                     page.wait_for_timeout(700)
-                    rows = page.query_selector_all('[data-testid="tracklist-row"]')
+                    rows = playlist_rows()
                     bottom_id: str | None = None
                     for row in reversed(rows):
-                        link = row.query_selector('a[href*="/track/"]')
+                        link = row.query_selector('[data-testid="internal-track-link"]')
                         if link:
                             href = link.get_attribute("href") or ""
                             tid = href.split("/track/")[-1].split("?")[0]
@@ -198,11 +215,11 @@ class SpotifyClient:
                 stale_rounds = 0
                 hit_known = False
                 while stale_rounds < 3 and not hit_known:
-                    rows = page.query_selector_all('[data-testid="tracklist-row"]')
+                    rows = playlist_rows()
                     new_found = False
 
                     for row in reversed(rows):
-                        track_link = row.query_selector('a[href*="/track/"]')
+                        track_link = row.query_selector('[data-testid="internal-track-link"]')
                         if not track_link:
                             continue
                         href = track_link.get_attribute("href") or ""
@@ -224,10 +241,7 @@ class SpotifyClient:
                         break
 
                     stale_rounds = 0 if new_found else stale_rounds + 1
-                    page.evaluate(
-                        "const r = document.querySelectorAll('[data-testid=\"tracklist-row\"]');"
-                        "if (r.length) r[0].scrollIntoView({block: 'start'});"
-                    )
+                    page.evaluate(_scroll_first)
                     page.wait_for_timeout(1000)
 
                 # Reverse so tracks are returned in playlist order (oldest first).
