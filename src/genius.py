@@ -6,39 +6,38 @@ from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_URL = "https://genius.com/api/search/multi"
-
 
 def get_lyrics(track_name: str, artist_name: str) -> str | None:
     """Scrape lyrics from Genius using a headless browser, or None if not found."""
     query = quote_plus(f"{track_name} {artist_name}")
-    api_url = f"{_SEARCH_URL}?q={query}"
+    search_url = f"https://genius.com/search?q={query}"
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()
 
-            response = page.goto(api_url, timeout=15000)
-            if not response or not response.ok:
-                logger.warning(
-                    "Genius API returned %s for '%s' — skipping lyrics.",
-                    response.status if response else "no response",
-                    track_name,
-                )
-                return None
+            page.goto(search_url, timeout=15000)
 
-            data = response.json()
-            sections = data.get("response", {}).get("sections", [])
+            # Find the first link ending in -lyrics (Genius lyrics URL pattern)
+            lyrics_url = page.evaluate("""() => {
+                const links = Array.from(document.querySelectorAll('a[href]'));
+                const hit = links.find(a =>
+                    a.href.includes('genius.com') && a.href.endsWith('-lyrics')
+                );
+                return hit ? hit.href : null;
+            }""")
 
-            lyrics_url = None
-            for section in sections:
-                for hit in section.get("hits", []):
-                    if hit.get("type") == "song":
-                        lyrics_url = hit["result"]["url"]
-                        break
-                if lyrics_url:
-                    break
+            if not lyrics_url:
+                # Wait a bit for JS-rendered results and retry once
+                page.wait_for_timeout(3000)
+                lyrics_url = page.evaluate("""() => {
+                    const links = Array.from(document.querySelectorAll('a[href]'));
+                    const hit = links.find(a =>
+                        a.href.includes('genius.com') && a.href.endsWith('-lyrics')
+                    );
+                    return hit ? hit.href : null;
+                }""")
 
             if not lyrics_url:
                 logger.info("No Genius results for '%s' by '%s'.", track_name, artist_name)
