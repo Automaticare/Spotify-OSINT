@@ -12,7 +12,16 @@ _HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/122.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://genius.com/",
+    "Origin": "https://genius.com",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 
@@ -24,6 +33,9 @@ def get_lyrics(track_name: str, artist_name: str) -> str | None:
         params={"q": f"{track_name} {artist_name}"},
         timeout=10,
     )
+    if response.status_code == 403:
+        logger.warning("Genius returned 403 — likely IP blocked (cloud runner). Skipping lyrics.")
+        return None
     response.raise_for_status()
 
     sections = response.json().get("response", {}).get("sections", [])
