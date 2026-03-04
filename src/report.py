@@ -98,3 +98,48 @@ def generate_time_report(patterns: dict, playlist_name: str) -> str | None:
     )
 
     return response.choices[0].message.content.strip()
+
+
+def run() -> None:
+    """Generate and send weekly time analysis for all active playlists."""
+    from src.database import get_active_playlists, get_tracks_for_report
+    from src.telegram import send_time_analysis_notification, send_error_notification
+
+    playlists = get_active_playlists()
+    if not playlists:
+        logger.info("No active playlists — nothing to report.")
+        return
+
+    for playlist in playlists:
+        playlist_id = playlist["id"]
+        playlist_name = playlist["name"]
+
+        try:
+            tracks = get_tracks_for_report(playlist_id)
+            patterns = analyze_time_patterns(tracks)
+
+            if patterns is None:
+                logger.info("No tracks in last 7 days for '%s' — skipping.", playlist_name)
+                continue
+
+            commentary = generate_time_report(patterns, playlist_name)
+            if commentary is None:
+                logger.warning("Could not generate report for '%s'.", playlist_name)
+                continue
+
+            send_time_analysis_notification(commentary, playlist_name, patterns)
+            logger.info("Time analysis sent for '%s'.", playlist_name)
+
+        except Exception as exc:
+            logger.exception("Report failed for '%s'.", playlist_name)
+            send_error_notification(
+                f"Weekly report failed for '{playlist_name}': {exc}"
+            )
+
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
+    )
+    run()
