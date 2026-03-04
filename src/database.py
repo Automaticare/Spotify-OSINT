@@ -96,6 +96,23 @@ def deactivate_playlist(playlist_id: str) -> None:
     logger.info("Playlist %s deactivated.", playlist_id)
 
 
+def get_tracks_for_report(playlist_id: str, days: int = 7) -> list[dict]:
+    """Return tracks detected in the last N days for a playlist."""
+    with _connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT track_name, artist_names, detected_at
+                FROM tracked_tracks
+                WHERE playlist_id = %s
+                  AND detected_at >= NOW() - INTERVAL '%s days'
+                ORDER BY detected_at
+                """,
+                (playlist_id, days),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
 def save_tracks(tracks: list[Track], playlist_id: str) -> None:
     if not tracks:
         return
