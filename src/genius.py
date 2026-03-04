@@ -1,16 +1,25 @@
 import logging
 import re
-from urllib.parse import quote_plus
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 logger = logging.getLogger(__name__)
 
 
+def _slug(text: str) -> str:
+    """Convert text to Genius URL slug: lowercase, special chars removed, spaces to hyphens."""
+    text = text.lower()
+    text = re.sub(r"[^\w\s]", "", text)   # remove punctuation (apostrophes, commas, etc.)
+    text = re.sub(r"[\s_]+", "-", text)   # spaces/underscores → hyphens
+    text = re.sub(r"-+", "-", text)        # collapse consecutive hyphens
+    return text.strip("-")
+
+
 def get_lyrics(track_name: str, artist_name: str) -> str | None:
-    """Scrape lyrics from Genius using a headless browser, or None if not found."""
-    query = quote_plus(f"{track_name} {artist_name}")
-    search_url = f"https://genius.com/search?q={query}"
+    """Scrape lyrics from Genius by navigating directly to the lyrics page."""
+    artist_slug = _slug(artist_name)
+    track_slug = _slug(track_name)
+    lyrics_url = f"https://genius.com/{artist_slug}-{track_slug}-lyrics"
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -28,37 +37,25 @@ def get_lyrics(track_name: str, artist_name: str) -> str | None:
         )
         try:
             page = context.new_page()
-            # Hide automation indicators
             page.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
 
-            page.goto(search_url, timeout=15000)
+            logger.info("Fetching lyrics from %s", lyrics_url)
+            response = page.goto(lyrics_url, timeout=15000)
+
+            if response and response.status == 404:
+                logger.info("No Genius page for '%s' by '%s'.", track_name, artist_name)
+                return None
 
             try:
-                page.wait_for_selector('a[href$="-lyrics"]', timeout=10000)
+                page.wait_for_selector('[data-lyrics-container="true"]', timeout=10000)
             except PlaywrightTimeoutError:
-                logger.info("No Genius results for '%s' by '%s'.", track_name, artist_name)
+                logger.info("Lyrics container not found for '%s'.", track_name)
                 return None
-
-            link = page.query_selector('a[href$="-lyrics"]')
-            if not link:
-                logger.info("No Genius results for '%s' by '%s'.", track_name, artist_name)
-                return None
-
-            lyrics_url = link.get_attribute("href")
-            if not lyrics_url:
-                return None
-            if not lyrics_url.startswith("http"):
-                lyrics_url = f"https://genius.com{lyrics_url}"
-
-            logger.info("Fetching lyrics from %s", lyrics_url)
-            page.goto(lyrics_url, timeout=15000)
-            page.wait_for_selector('[data-lyrics-container="true"]', timeout=10000)
 
             containers = page.query_selector_all('[data-lyrics-container="true"]')
             if not containers:
-                logger.warning("No lyrics containers found on Genius page: %s", lyrics_url)
                 return None
 
             lines = [container.inner_text() for container in containers]
